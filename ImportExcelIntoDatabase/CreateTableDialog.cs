@@ -23,9 +23,13 @@ namespace ImportExcelIntoDatabase
             {
                 var rowIndex = dataGridViewColumns.Rows.Add();
                 dataGridViewColumns.Rows[rowIndex].Cells[0].Value = columnNames[i];
-                dataGridViewColumns.Rows[rowIndex].Cells[1].Value = i < suggestedDataTypes.Count 
-                    ? suggestedDataTypes[i] 
-                    : "NVARCHAR(255)";
+                
+                // Ensure the suggested data type is valid
+                var suggestedType = i < suggestedDataTypes.Count ? suggestedDataTypes[i] : "NVARCHAR(255)";
+                
+                // Set the value for the combo box cell
+                var comboCell = (DataGridViewComboBoxCell)dataGridViewColumns.Rows[rowIndex].Cells[1];
+                comboCell.Value = suggestedType;
             }
         }
         
@@ -76,7 +80,12 @@ namespace ImportExcelIntoDatabase
             // colDataType
             this.colDataType.HeaderText = "Data Type";
             this.colDataType.Name = "colDataType";
-            this.colDataType.Items.AddRange(new object[] {
+            this.colDataType.Width = 200;
+            this.colDataType.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+            
+            // Add data type options to the combo box column
+            var dataTypes = new List<string>
+            {
                 "NVARCHAR(50)",
                 "NVARCHAR(100)",
                 "NVARCHAR(255)",
@@ -89,10 +98,15 @@ namespace ImportExcelIntoDatabase
                 "DATE",
                 "DATETIME",
                 "DATETIME2"
-            });
-            this.colDataType.Width = 200;
+            };
+            
+            foreach (var dataType in dataTypes)
+            {
+                this.colDataType.Items.Add(dataType);
+            }
             
             // dataGridViewColumns
+            this.dataGridViewColumns.AllowUserToAddRows = false;
             this.dataGridViewColumns.AllowUserToDeleteRows = false;
             this.dataGridViewColumns.BackgroundColor = SystemColors.Window;
             this.dataGridViewColumns.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
@@ -105,6 +119,7 @@ namespace ImportExcelIntoDatabase
             this.dataGridViewColumns.RowHeadersWidth = 51;
             this.dataGridViewColumns.Size = new Size(600, 300);
             this.dataGridViewColumns.TabIndex = 3;
+            this.dataGridViewColumns.DataError += DataGridViewColumns_DataError;
             
             // btnCancel
             this.btnCancel.DialogResult = DialogResult.Cancel;
@@ -151,6 +166,13 @@ namespace ImportExcelIntoDatabase
             ((System.ComponentModel.ISupportInitialize)(this.dataGridViewColumns)).EndInit();
             this.ResumeLayout(false);
             this.PerformLayout();
+        }
+        
+        private void DataGridViewColumns_DataError(object? sender, DataGridViewDataErrorEventArgs e)
+        {
+            // Suppress the default error dialog
+            e.ThrowException = false;
+            e.Cancel = false;
         }
         
         private void btnOK_Click(object? sender, EventArgs e)

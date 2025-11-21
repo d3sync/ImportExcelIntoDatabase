@@ -571,68 +571,167 @@ namespace ImportExcelIntoDatabase.Services
             );
         }
         
+        /// <summary>
+        /// Intelligently infers SQL data type by analyzing the entire column
+        /// Looks for first 2-3 non-null values to avoid misinterpretation
+        /// </summary>
         public string InferSqlDataType(List<object> sampleData)
         {
             if (sampleData == null || sampleData.Count == 0)
                 return "NVARCHAR(255)";
             
-            // Check for numeric types
-            bool allIntegers = true;
-            bool allDecimals = true;
-            bool allDates = true;
-            bool allBooleans = true;
+            // First, collect non-null, non-empty values
+            var nonNullValues = sampleData
+                .Where(v => v != null && !string.IsNullOrWhiteSpace(v.ToString()))
+                .Take(100) // Analyze up to first 100 non-null values for accuracy
+                .ToList();
+            
+            // IMPORTANT: If no non-null values found in 1,000 rows, default to NVARCHAR(255)
+            // This handles the edge case where data might exist after row 1,000
+            if (nonNullValues.Count == 0)
+                return "NVARCHAR(255)"; // Safe default - data might exist later in file
+            
+            // Get first 2-3 non-null values for detailed analysis
+            var firstNonNulls = nonNullValues.Take(3).ToList();
+            
+            // Counters for type detection across ALL non-null values
+            int integerCount = 0;
+            int decimalCount = 0;
+            int dateCount = 0;
+            int booleanCount = 0;
             int maxLength = 0;
             
-            foreach (var value in sampleData)
+            foreach (var value in nonNullValues)
             {
-                if (value == null || value.ToString() == string.Empty)
-                    continue;
-                
                 var stringValue = value.ToString()!;
                 maxLength = Math.Max(maxLength, stringValue.Length);
                 
                 // Check integer
-                if (allIntegers && !int.TryParse(stringValue, out _))
+                if (int.TryParse(stringValue, out _) || long.TryParse(stringValue, out _))
                 {
-                    allIntegers = false;
+                    integerCount++;
                 }
                 
-                // Check decimal
-                if (allDecimals && !decimal.TryParse(stringValue, out _))
+                // Check decimal (includes integers)
+                if (decimal.TryParse(stringValue, out _))
                 {
-                    allDecimals = false;
+                    decimalCount++;
                 }
                 
                 // Check date
-                if (allDates && !DateTime.TryParse(stringValue, out _))
+                if (value is DateTime || DateTime.TryParse(stringValue, out _))
                 {
-                    allDates = false;
+                    dateCount++;
                 }
                 
                 // Check boolean
-                if (allBooleans && !bool.TryParse(stringValue, out _) && 
-                    stringValue != "1" && stringValue != "0")
+                var lower = stringValue.ToLower();
+                if (bool.TryParse(stringValue, out _) || 
+                    lower == "1" || lower == "0" ||
+                    lower == "yes" || lower == "no" ||
+                    lower == "y" || lower == "n" ||
+                    lower == "true" || lower == "false")
                 {
-                    allBooleans = false;
+                    booleanCount++;
                 }
             }
             
-            // Return appropriate type
-            if (allBooleans)
+            int totalNonNull = nonNullValues.Count;
+            
+            // SAFETY CHECK: If we have very few non-null values (< 5), default to NVARCHAR
+            // This prevents misclassification based on insufficient data
+            if (totalNonNull < 5)
+                return "NVARCHAR(255)"; // Not enough data to make confident decision
+            
+            // Calculate percentages for type determination
+            double integerPercent = (double)integerCount / totalNonNull;
+            double decimalPercent = (double)decimalCount / totalNonNull;
+            double datePercent = (double)dateCount / totalNonNull;
+            double booleanPercent = (double)booleanCount / totalNonNull;
+            
+            // Priority-based type determination with thresholds
+            // Use 90% threshold to handle occasional outliers
+            
+            // 1. Boolean (if 90%+ match and values are simple)
+            if (booleanPercent >= 0.90 && maxLength <= 5)
+            {
                 return "BIT";
+            }
             
-            if (allIntegers)
-                return "INT";
+            // 2. Integer (if 95%+ are integers)
+            if (integerPercent >= 0.95)
+            {
+                // Check if any values are too large for INT
+                bool needsBigInt = nonNullValues.Any(v => 
+                {
+                    var str = v.ToString()!;
+                    if (long.TryParse(str, out var l))
+                        return l > int.MaxValue || l < int.MinValue;
+                    return false;
+                });
+                
+                return needsBigInt ? "BIGINT" : "INT";
+            }
             
-            if (allDecimals)
-                return "DECIMAL(18,2)";
+            // 3. Decimal (if 90%+ are numeric but not all integers)
+            if (decimalPercent >= 0.90 && integerPercent < 0.95)
+            {
+                // Check if we need more precision
+                bool needsHighPrecision = nonNullValues.Any(v =>
+                {
+                    var str = v.ToString()!;
+                    if (decimal.TryParse(str, out var d))
+                    {
+                        var decimalPlaces = str.Contains('.') ? str.Split('.')[1].Length : 0;
+                        return decimalPlaces > 2;
+                    }
+                    return false;
+                });
+                
+                return needsHighPrecision ? "DECIMAL(18,6)" : "DECIMAL(18,2)";
+            }
             
-            if (allDates)
-                return "DATE";
+            // 4. Date (if 90%+ are dates)
+            if (datePercent >= 0.90)
+            {
+                // Check if times are present
+                bool hasTime = nonNullValues.Any(v =>
+                {
+                    if (v is DateTime dt)
+                        return dt.TimeOfDay != TimeSpan.Zero;
+                    
+                    var str = v.ToString()!;
+                    if (DateTime.TryParse(str, out var parsed))
+                        return parsed.TimeOfDay != TimeSpan.Zero || str.Contains(":");
+                    
+                    return false;
+                });
+                
+                return hasTime ? "DATETIME2" : "DATE";
+            }
             
-            // Default to NVARCHAR with appropriate length
-            int suggestedLength = Math.Max(50, Math.Min(maxLength * 2, 4000));
-            return $"NVARCHAR({suggestedLength})";
+            // 5. Default to NVARCHAR with smart length calculation
+            // Use max length found, but apply sensible minimums and maximums
+            int suggestedLength;
+            
+            if (maxLength <= 10)
+                suggestedLength = 50;  // Short text - use 50
+            else if (maxLength <= 50)
+                suggestedLength = 100; // Medium text - use 100
+            else if (maxLength <= 100)
+                suggestedLength = 255; // Long text - use 255
+            else if (maxLength <= 500)
+                suggestedLength = 1000; // Very long - use 1000
+            else
+                suggestedLength = -1; // Extremely long - use MAX
+            
+            // Safety factor: add 20% buffer (but not for MAX)
+            if (suggestedLength > 0)
+            {
+                suggestedLength = Math.Min((int)(suggestedLength * 1.2), 4000);
+            }
+            
+            return suggestedLength > 0 ? $"NVARCHAR({suggestedLength})" : "NVARCHAR(MAX)";
         }
         
         public string BuildConnectionString(string serverName, string databaseName, 

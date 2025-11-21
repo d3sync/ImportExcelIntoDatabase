@@ -14,11 +14,11 @@
     <AssemblyTitle>Excel to Database Importer</AssemblyTitle>
     <Product>Excel to Database Importer</Product>
     <Company>Your Company</Company>
-    <Description>A modern, user-friendly application for importing Excel data into SQL Server databases with high performance bulk import capabilities.</Description>
+    <Description>A modern, user-friendly application for importing Excel data into SQL Server databases with high performance bulk import capabilities and intelligent type inference.</Description>
     <Copyright>Copyright © 2024</Copyright>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
-    <Version>2.0.0</Version>
+    <AssemblyVersion>2.2.0.0</AssemblyVersion>
+    <FileVersion>2.2.0.0</FileVersion>
+    <Version>2.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

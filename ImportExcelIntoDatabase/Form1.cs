@@ -590,16 +590,28 @@ namespace ImportExcelIntoDatabase
             try
             {
                 Cursor = Cursors.WaitCursor;
+                lblStatus.Text = "Analyzing Excel data for type inference...";
+                Application.DoEvents();
                 
-                // Infer data types from Excel data
+                // Load ALL rows for accurate data type inference
+                // This ensures we don't miss patterns by only looking at preview data
+                var allRows = await _excelService.GetAllDataRows(_excelFilePath, _excelData.StartRow);
+                
+                lblStatus.Text = $"Inferring data types from {allRows.Count} rows...";
+                Application.DoEvents();
+                
+                // Infer data types from ENTIRE dataset (not just preview)
                 var suggestedDataTypes = new List<string>();
                 foreach (var header in _excelData.Headers)
                 {
                     var columnIndex = _excelData.Headers.IndexOf(header);
                     var columnData = new List<object>();
                     
-                    foreach (var row in _excelData.Rows)
+                    // Collect ALL values from this column (up to 1000 rows for performance)
+                    int rowsToAnalyze = Math.Min(allRows.Count, 1000);
+                    for (int i = 0; i < rowsToAnalyze; i++)
                     {
+                        var row = allRows[i];
                         if (columnIndex < row.Count)
                         {
                             columnData.Add(row[columnIndex]);
@@ -610,11 +622,17 @@ namespace ImportExcelIntoDatabase
                     suggestedDataTypes.Add(dataType);
                 }
                 
+                lblStatus.Text = "Opening table creation dialog...";
+                Application.DoEvents();
+                
                 // Show create table dialog
                 using var dialog = new CreateTableDialog(_excelData.Headers, suggestedDataTypes);
                 
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
+                    lblStatus.Text = $"Creating table '{dialog.TableName}'...";
+                    Application.DoEvents();
+                    
                     // Create the table
                     var columnNames = dialog.Columns.Select(c => c.ColumnName).ToList();
                     var dataTypes = dialog.Columns.Select(c => c.DataType).ToList();
@@ -629,8 +647,14 @@ namespace ImportExcelIntoDatabase
                         columnNames,
                         dataTypes);
                     
-                    MessageBox.Show($"Table '{dialog.TableName}' created successfully!", "Success",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    lblStatus.Text = $"Table '{dialog.TableName}' created successfully!";
+                    lblStatus.ForeColor = Color.Green;
+                    
+                    MessageBox.Show($"Table '{dialog.TableName}' created successfully!\n\n" +
+                                  $"Columns: {columnNames.Count}\n" +
+                                  $"Analyzed: {Math.Min(allRows.Count, 1000)} rows for type inference",
+                                  "Success",
+                                  MessageBoxButtons.OK, MessageBoxIcon.Information);
                     
                     // Refresh tables list
                     await LoadTablesForSelectedDatabase();
@@ -638,9 +662,17 @@ namespace ImportExcelIntoDatabase
                     // Select the newly created table
                     cmbTables.Text = dialog.TableName;
                 }
+                else
+                {
+                    lblStatus.Text = "Table creation cancelled.";
+                    lblStatus.ForeColor = Color.Gray;
+                }
             }
             catch (Exception ex)
             {
+                lblStatus.Text = "Error creating table!";
+                lblStatus.ForeColor = Color.Red;
+                
                 MessageBox.Show($"Error creating table: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
